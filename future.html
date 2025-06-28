@@ -323,13 +323,13 @@ fuzzySlider.addEventListener("input", () => {
 document.getElementById("fuzzy-minus").addEventListener("click", () => {
   fuzzySign = -1;
   document.getElementById("fuzzy-minus").className = "bg-red-500 text-white px-3 py-1 rounded";
-  document.getElementById("fuzzy-plus").className = "bg-gray-200 text-gray-700 px-3 py-1 rounded";
+  document.getElementById("fuzzy-plus").className = "bg-gray-200 text-gray-700 px-3 py-1 rounded font-bold";
 });
 
 document.getElementById("fuzzy-plus").addEventListener("click", () => {
   fuzzySign = 1;
-  document.getElementById("fuzzy-plus").className = "bg-green-500 text-white px-3 py-1 rounded";
-  document.getElementById("fuzzy-minus").className = "bg-gray-200 text-gray-700 px-3 py-1 rounded";
+  document.getElementById("fuzzy-plus").className = "bg-green-500 text-white px-3 py-1 rounded font-bold";
+  document.getElementById("fuzzy-minus").className = "bg-gray-200 text-gray-700 px-3 py-1 rounded font-bold";
 });
 
 const fuzzyForm = document.getElementById("fuzzy-form");
@@ -704,32 +704,66 @@ fuzzyForm.addEventListener("submit", async function (e) {
       }
     });
 
-    // ===== 四象限パッドUI =====
+    // ===== 四象限パッドUI（ドラッグ対応） =====
     const pad = document.getElementById("quad-pad");
     const ctx = pad.getContext("2d");
     const result = document.getElementById("quad-result");
+    const quadSubmit = document.getElementById("quad-submit");
     let quadAmount = 0;
-    // 初期描画
-    function drawPad(x, y) {
+    let isQuadDragging = false;
+    let quadPos = {x: 150, y: 150};
+    let quadTrail = [];
+    function drawPad(pos, trail) {
       ctx.clearRect(0, 0, 300, 300);
+      // 背景色（収入/支出でじんわり変化）
+      if (quadAmount !== 0) {
+        ctx.save();
+        ctx.globalAlpha = 0.12;
+        ctx.fillStyle = quadAmount > 0 ? '#3b82f6' : '#ef4444';
+        ctx.beginPath();
+        ctx.arc(150, 150, 140, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.restore();
+      }
       ctx.strokeStyle = "#999";
       ctx.beginPath();
       ctx.moveTo(150, 0); ctx.lineTo(150, 300);
       ctx.moveTo(0, 150); ctx.lineTo(300, 150);
       ctx.stroke();
-      if (x !== undefined && y !== undefined) {
+      // 軌跡
+      if (trail && trail.length > 1) {
+        ctx.save();
+        ctx.strokeStyle = quadAmount > 0 ? '#2563eb' : quadAmount < 0 ? '#dc2626' : '#aaa';
+        ctx.globalAlpha = 0.4;
+        ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.arc(x, y, 7, 0, 2 * Math.PI);
-        ctx.fillStyle = "#10b981";
+        ctx.moveTo(trail[0].x, trail[0].y);
+        for (let i = 1; i < trail.length; i++) {
+          ctx.lineTo(trail[i].x, trail[i].y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+      // 点
+      if (pos) {
+        ctx.beginPath();
+        // 金額が大きいほど大きく
+        const r = 10 + Math.min(30, Math.abs(quadAmount) / 400);
+        // 色も金額・方向で変化
+        ctx.fillStyle = quadAmount > 0
+          ? `rgba(37,99,235,${0.5 + Math.abs(quadAmount)/20000})` // 青系
+          : quadAmount < 0
+            ? `rgba(220,38,38,${0.5 + Math.abs(quadAmount)/20000})` // 赤系
+            : "#aaa";
+        ctx.arc(pos.x, pos.y, r, 0, 2 * Math.PI);
+        ctx.shadowColor = ctx.fillStyle;
+        ctx.shadowBlur = 10;
         ctx.fill();
+        ctx.shadowBlur = 0;
       }
     }
-    drawPad();
-    pad.addEventListener("click", (e) => {
-      const rect = pad.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      // 座標から金額を推定
+    drawPad(quadPos, quadTrail);
+    function updateQuadAmount(x, y) {
       const dx = x - 150;
       const dy = y - 150;
       const maxAmount = 10000;
@@ -737,9 +771,71 @@ fuzzyForm.addEventListener("submit", async function (e) {
       const direction = -dy / 150; // 上が収入、下が支出
       quadAmount = Math.floor(maxAmount * magnitude * Math.sign(direction));
       result.textContent = `${quadAmount >= 0 ? "収入" : "支出"}：${Math.abs(quadAmount).toLocaleString()}円`;
-      drawPad(x, y);
+      quadSubmit.disabled = quadAmount === 0;
+    }
+    pad.addEventListener("mousedown", (e) => {
+      isQuadDragging = true;
+      pad.classList.add("cursor-grabbing");
+      quadTrail = [Object.assign({}, quadPos)];
     });
-    document.getElementById("quad-submit").addEventListener("click", async () => {
+    pad.addEventListener("mousemove", (e) => {
+      if (!isQuadDragging) return;
+      const rect = pad.getBoundingClientRect();
+      const x = Math.max(10, Math.min(290, e.clientX - rect.left));
+      const y = Math.max(10, Math.min(290, e.clientY - rect.top));
+      quadPos = {x, y};
+      quadTrail.push({x, y});
+      updateQuadAmount(x, y);
+      drawPad(quadPos, quadTrail);
+    });
+    pad.addEventListener("mouseup", () => {
+      isQuadDragging = false;
+      pad.classList.remove("cursor-grabbing");
+      // 軌跡を少しずつ消すアニメーション
+      const fadeTrail = () => {
+        if (quadTrail.length > 1) {
+          quadTrail.shift();
+          drawPad(quadPos, quadTrail);
+          requestAnimationFrame(fadeTrail);
+        }
+      };
+      fadeTrail();
+    });
+    pad.addEventListener("mouseleave", () => {
+      isQuadDragging = false;
+      pad.classList.remove("cursor-grabbing");
+      quadTrail = [];
+      drawPad(quadPos, quadTrail);
+    });
+    // タッチ対応
+    pad.addEventListener("touchstart", (e) => {
+      isQuadDragging = true;
+      quadTrail = [Object.assign({}, quadPos)];
+    });
+    pad.addEventListener("touchmove", (e) => {
+      if (!isQuadDragging) return;
+      const rect = pad.getBoundingClientRect();
+      const touch = e.touches[0];
+      const x = Math.max(10, Math.min(290, touch.clientX - rect.left));
+      const y = Math.max(10, Math.min(290, touch.clientY - rect.top));
+      quadPos = {x, y};
+      quadTrail.push({x, y});
+      updateQuadAmount(x, y);
+      drawPad(quadPos, quadTrail);
+    });
+    pad.addEventListener("touchend", () => {
+      isQuadDragging = false;
+      // 軌跡を少しずつ消すアニメーション
+      const fadeTrail = () => {
+        if (quadTrail.length > 1) {
+          quadTrail.shift();
+          drawPad(quadPos, quadTrail);
+          requestAnimationFrame(fadeTrail);
+        }
+      };
+      fadeTrail();
+    });
+    quadSubmit.addEventListener("click", async () => {
       if (quadAmount === 0) return;
       try {
         await addDoc(collection(db, "future_expenses"), {
@@ -750,7 +846,11 @@ fuzzyForm.addEventListener("submit", async function (e) {
           createdAt: new Date()
         });
         result.textContent = "登録しました！";
-        drawPad();
+        quadAmount = 0;
+        quadPos = {x: 150, y: 150};
+        quadTrail = [];
+        drawPad(quadPos, quadTrail);
+        quadSubmit.disabled = true;
         await loadFutureExpenses();
       } catch (err) {
         result.textContent = "エラー：" + err.message;
